@@ -1,0 +1,427 @@
+{
+  "$schema": "../shared-rules/SCHEMA.md#v1",
+  "scanner_id": "deploy",
+  "scanner_name": "Deploy Readiness",
+  "scanner_description": "Detects production configuration issues that will cause outages, data leaks, or degraded performance in deployed environments.",
+  "category": "deploy",
+  "version": "1.0.1",
+  "overlay": true,
+  "rules": [
+    {
+      "kind": "regex",
+      "id": "DP01",
+      "name": "NODE_ENV Hardcoded to Development",
+      "severity": "Critical",
+      "note": "NODE_ENV is hardcoded to 'development'. In production this enables verbose errors, disables caching, and may expose stack traces to users.",
+      "remediation": "Remove hardcoded value. Set NODE_ENV=production in deployment environment variables, not in code.",
+      "regex": "NODE_ENV\\s*=\\s*['\"]development['\"]",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"],
+        "path_suffixes": ["package.json"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP02",
+      "name": "Source Maps Enabled in Production Config",
+      "severity": "High",
+      "note": "Source maps expose original source code, variable names, and application logic to anyone inspecting the deployed bundle.",
+      "remediation": "Set devtool: false (webpack), sourcemap: false (vite), or productionSourceMap: false (vue-cli) in production builds.",
+      "regex": "(?:devtool\\s*:\\s*['\"]source-map['\"]|productionSourceMap\\s*:\\s*true|sourcemap\\s*:\\s*true)",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"],
+        "path_patterns": ["**webpack*", "**vite.config*", "**next.config*"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP03",
+      "name": "No Health Check Endpoint",
+      "severity": "Medium",
+      "note": "Server has no health check endpoint. Load balancers and orchestrators cannot verify the app is running, leading to routing traffic to dead instances.",
+      "remediation": "Add a GET /health or /healthz endpoint that returns 200 when the app is ready to serve traffic. Include DB connectivity check if applicable.",
+      "regex": "(?:app\\.listen|createServer)",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "exclude_contains": ["/health", "/healthz", "/ready", "/ping", "/status"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP04",
+      "name": "No Graceful Shutdown Handler",
+      "severity": "Medium",
+      "note": "Server does not handle SIGTERM/SIGINT. Deployments will kill in-flight requests instead of draining them, causing 502 errors during deploys.",
+      "remediation": "Handle process.on('SIGTERM') to close the server, drain connections, and exit cleanly. Most cloud platforms send SIGTERM before SIGKILL.",
+      "regex": "(?:app\\.listen|createServer)",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "exclude_contains": ["SIGTERM", "SIGINT", "graceful"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP05",
+      "name": "No Error Tracking Integrated",
+      "severity": "Medium",
+      "note": "No error tracking service detected (Sentry, Bugsnag, Rollbar, Datadog, New Relic). Production errors will go unnoticed until users report them.",
+      "remediation": "Integrate an error tracking service. Sentry is free for small teams: npm install @sentry/node && Sentry.init({ dsn: '...' })",
+      "regex": "app\\.listen",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "exclude_contains": ["sentry", "bugsnag", "rollbar", "airbrake", "datadog", "newrelic"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP06",
+      "name": "Stack Traces Sent to Client",
+      "severity": "Critical",
+      "note": "Error stack traces are sent in API responses. This exposes file paths, line numbers, library versions, and internal architecture to attackers.",
+      "remediation": "Log full errors server-side. Return generic error messages to clients: res.status(500).json({ error: 'Internal server error' })",
+      "regex": "err\\.stack",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "require_contains": ["res.json", "res.send"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP07",
+      "name": "Raw Error Messages Sent to Client",
+      "severity": "High",
+      "note": "Raw error messages forwarded to clients may leak database column names, query syntax, or internal service details.",
+      "remediation": "Sanitize error messages before returning. Map known errors to user-friendly messages, default to generic for unknown.",
+      "regex": "err\\.message",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "require_contains": ["res.json", "res.send"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP08",
+      "name": "TLS Certificate Verification Disabled",
+      "severity": "Critical",
+      "note": "TLS certificate verification is disabled (rejectUnauthorized: false). This accepts self-signed and expired certs, enabling man-in-the-middle attacks.",
+      "remediation": "Remove rejectUnauthorized: false. If a self-signed cert is needed for dev, use NODE_EXTRA_CA_CERTS environment variable instead.",
+      "regex": "rejectUnauthorized\\s*:\\s*false",
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP09",
+      "name": "NODE_TLS_REJECT_UNAUTHORIZED Set to 0",
+      "severity": "Critical",
+      "note": "Global TLS rejection is disabled for the entire process. Every HTTPS connection in this app is vulnerable to MITM attacks.",
+      "remediation": "Remove this setting entirely. Fix the underlying certificate issue instead of disabling verification globally.",
+      "regex": "NODE_TLS_REJECT_UNAUTHORIZED\\s*[=:]\\s*['\"]?0",
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP10",
+      "name": "SSL Verification Disabled (Python requests)",
+      "severity": "Critical",
+      "note": "requests.get/post with verify=False skips TLS certificate validation. All data sent over this connection can be intercepted.",
+      "remediation": "Remove verify=False. If using a custom CA, pass the CA bundle path: verify='/path/to/ca-bundle.crt'",
+      "regex": "verify\\s*=\\s*False",
+      "scope": {
+        "extensions": ["py", "pyw"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP11",
+      "name": "No HTTPS Enforcement Detected",
+      "severity": "High",
+      "note": "No HTTPS redirect or enforcement detected. Users accessing via HTTP will transmit credentials and data in plaintext.",
+      "remediation": "Use helmet.hsts() or add middleware to redirect HTTP to HTTPS. If behind a reverse proxy, check X-Forwarded-Proto header.",
+      "regex": "app\\.listen",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "exclude_contains": ["https", "ssl", "tls", "redirect", "force-ssl", "helmet"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP12",
+      "name": "Database Connection Without SSL",
+      "severity": "High",
+      "note": "PostgreSQL connection string without sslmode=require. Database traffic is unencrypted and queryable by network observers.",
+      "remediation": "Add ?sslmode=require (or sslmode=verify-full for maximum security) to the connection string.",
+      "regex": "postgres(?:ql)?://",
+      "exclude_contains": ["sslmode=require", "ssl=true", "sslmode=verify"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP13",
+      "name": "MongoDB Connection Without TLS",
+      "severity": "High",
+      "note": "MongoDB connection string without tls=true. All queries and data transit unencrypted.",
+      "remediation": "Add ?tls=true to the MongoDB connection string. Use mongodb+srv:// which enables TLS by default.",
+      "regex": "mongodb(?:\\+srv)?://",
+      "exclude_contains": ["tls=true", "ssl=true"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP14",
+      "name": "Node Started Without Process Manager",
+      "severity": "Low",
+      "note": "Start script runs bare 'node' without PM2 or similar. If the process crashes, it stays down until manually restarted.",
+      "remediation": "Use PM2 for production: pm2 start app.js --name myapp -i max. Or ensure Docker/systemd handles restarts.",
+      "regex": "\"start\"\\s*:\\s*\"node\\s",
+      "scope": {
+        "path_suffixes": ["package.json"]
+      },
+      "exclude_contains": ["pm2", "forever", "nodemon", "\"bin\":", "\"preferGlobal\""],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP15",
+      "name": "Production Logging via console.log Only",
+      "severity": "Medium",
+      "note": "Using console.log for production logging. No structured logging, no log levels, no log rotation — makes debugging production issues extremely difficult.",
+      "remediation": "Use a structured logger like Pino or Winston: const logger = pino({ level: 'info' }). Route logs to a log aggregation service.",
+      "regex": "console\\.log",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "require_contains": ["app.listen"],
+      "exclude_contains": ["winston", "pino", "bunyan", "morgan", "log4js"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP16",
+      "name": "Django ALLOWED_HOSTS is Empty",
+      "severity": "High",
+      "note": "Empty ALLOWED_HOSTS means Django will reject all requests when DEBUG=False, causing a complete outage.",
+      "remediation": "Set ALLOWED_HOSTS to your domain(s): ALLOWED_HOSTS = ['yourdomain.com', 'www.yourdomain.com']",
+      "regex": "ALLOWED_HOSTS\\s*=\\s*\\[\\s*\\]",
+      "scope": {
+        "extensions": ["py", "pyw"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP17",
+      "name": "Gunicorn Running Single Worker",
+      "severity": "Medium",
+      "note": "Gunicorn configured with 1 worker. A single slow request blocks all traffic. Production should use (2×CPU)+1 workers.",
+      "remediation": "Set workers to (2 * num_cores) + 1. Example: gunicorn --workers 5 app:app",
+      "regex": "workers\\s*(?:=|\\s)\\s*1\\b",
+      "require_contains": ["gunicorn"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP18",
+      "name": "Static Assets Served Without Cache Headers",
+      "severity": "Low",
+      "note": "express.static() without maxAge means browsers re-download every asset on every page load, increasing load times and server costs.",
+      "remediation": "express.static('public', { maxAge: '1y', immutable: true }) for hashed assets, or maxAge: '1h' for non-hashed.",
+      "regex": "express\\.static",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "exclude_contains": ["maxAge", "max-age", "Cache-Control"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP19",
+      "name": "No Response Compression",
+      "severity": "Low",
+      "note": "Express app without compression middleware. Responses are sent uncompressed, increasing bandwidth 60-80% for text content.",
+      "remediation": "npm install compression && app.use(compression()). Or handle compression at the reverse proxy/CDN level.",
+      "regex": "express\\(\\)",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "exclude_contains": ["compression", "compress"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP20",
+      "name": "Vercel Config Missing Security Headers",
+      "severity": "Medium",
+      "note": "vercel.json defines custom headers but omits security headers (X-Frame-Options, CSP, HSTS).",
+      "remediation": "Add security headers to your vercel.json headers configuration.",
+      "regex": "\"headers\"",
+      "scope": {
+        "path_suffixes": ["vercel.json"]
+      },
+      "exclude_contains": ["X-Frame-Options"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP21",
+      "name": "Netlify Config Missing Security Headers",
+      "severity": "Medium",
+      "note": "netlify.toml has no custom headers section. Security headers like CSP, HSTS, and X-Frame-Options are not configured.",
+      "remediation": "Add [[headers]] sections to netlify.toml with security header values.",
+      "regex": "^",
+      "scope": {
+        "path_suffixes": ["netlify.toml"]
+      },
+      "exclude_contains": ["headers"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP22",
+      "name": "Hardcoded Port Number",
+      "severity": "Low",
+      "note": "Server listens on a hardcoded port. Most cloud platforms assign a dynamic port via PORT env var — this will fail to start.",
+      "remediation": "Use: app.listen(process.env.PORT || 3000)",
+      "regex": "\\.listen\\(\\s*(?:3000|8080|5000|4000)\\b",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "exclude_contains": ["process.env.PORT", "PORT ||"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP23",
+      "name": "COPY . . Without .dockerignore",
+      "severity": "Medium",
+      "note": "Dockerfile copies entire context. Without .dockerignore, node_modules, .env, .git, and secrets may end up in the image.",
+      "remediation": "Create .dockerignore with: node_modules, .git, .env, *.log, dist, coverage, .DS_Store",
+      "regex": "COPY\\s+\\.\\s+\\.|COPY\\s+\\./\\s+\\./",
+      "scope": {
+        "path_suffixes": ["Dockerfile"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP24",
+      "name": "No Server Request Timeout",
+      "severity": "Medium",
+      "note": "HTTP server has no request timeout. Slow clients or intentional slowloris attacks will hold connections open indefinitely, exhausting server resources.",
+      "remediation": "Set server.timeout and server.headersTimeout: server.timeout = 30000; server.headersTimeout = 31000;",
+      "regex": "createServer",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "exclude_contains": ["timeout", "setTimeout"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP26",
+      "name": "No CORS Configuration",
+      "severity": "Medium",
+      "note": "API server has mutation endpoints but no CORS middleware. Browsers will block cross-origin requests, or worse, a permissive default may be inherited.",
+      "remediation": "npm install cors && app.use(cors({ origin: 'https://yourdomain.com', credentials: true }))",
+      "regex": "app\\.(?:post|put|delete)",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "require_contains": ["express()"],
+      "exclude_contains": ["cors", "Access-Control"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP27",
+      "name": "setInterval Without clearInterval",
+      "severity": "Low",
+      "note": "setInterval without corresponding clearInterval will leak memory over time in long-running server processes.",
+      "remediation": "Store the interval ID and call clearInterval in cleanup/shutdown handlers.",
+      "regex": "setInterval",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "exclude_contains": ["clearInterval"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP28",
+      "name": "Flask Development Server Used in Production",
+      "severity": "High",
+      "note": "Flask's built-in server (app.run()) is single-threaded and not designed for production traffic. It will drop requests under load.",
+      "remediation": "Use Gunicorn: gunicorn --bind 0.0.0.0:8000 --workers 4 app:app. Or Waitress for Windows.",
+      "regex": "app\\.run\\(",
+      "scope": {
+        "extensions": ["py", "pyw"]
+      },
+      "require_contains": ["flask"],
+      "exclude_contains": ["gunicorn", "uwsgi", "waitress"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP29",
+      "name": ".env File Without .env.example",
+      "severity": "Low",
+      "note": "An .env file exists but no .env.example template was detected. New developers won't know which environment variables are required.",
+      "remediation": "Create .env.example with all required keys (values blanked) and commit it to the repo.",
+      "regex": "^",
+      "scope": {
+        "path_suffixes": [".env"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP30",
+      "name": "Kubernetes Deployment Missing Readiness Probe",
+      "severity": "High",
+      "note": "Pod has no readinessProbe. Kubernetes will route traffic to pods before they're ready, causing 502/503 errors during deployments.",
+      "remediation": "Add readinessProbe with httpGet on your health endpoint: readinessProbe: { httpGet: { path: /health, port: 8080 }, initialDelaySeconds: 5 }",
+      "regex": "kind\\s*:\\s*(?:Deployment|Pod)",
+      "scope": {
+        "extensions": ["yaml", "yml"]
+      },
+      "exclude_contains": ["readinessProbe"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP31",
+      "name": "Kubernetes Deployment Missing Liveness Probe",
+      "severity": "Medium",
+      "note": "Pod has no livenessProbe. If the app deadlocks or hangs, Kubernetes won't restart it — the pod stays up but stops serving.",
+      "remediation": "Add livenessProbe: { httpGet: { path: /health, port: 8080 }, initialDelaySeconds: 15, periodSeconds: 10 }",
+      "regex": "kind\\s*:\\s*(?:Deployment|Pod)",
+      "scope": {
+        "extensions": ["yaml", "yml"]
+      },
+      "exclude_contains": ["livenessProbe"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "DP32",
+      "name": "Kubernetes Pod Without Resource Limits",
+      "severity": "Medium",
+      "note": "No CPU/memory limits set. Pod can consume unbounded resources, starving other pods and potentially crashing the node.",
+      "remediation": "Add resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 512Mi } }",
+      "regex": "kind\\s*:\\s*(?:Deployment|Pod)",
+      "scope": {
+        "extensions": ["yaml", "yml"]
+      },
+      "exclude_contains": ["resources:"],
+      "match_once": true
+    }
+  ]
+}

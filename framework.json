@@ -1,0 +1,260 @@
+{
+  "$schema": "../shared-rules/SCHEMA.md#v1",
+  "scanner_id": "framework",
+  "scanner_name": "Framework Safety",
+  "scanner_description": "Detects framework security features that are available but not enabled — missing helmet, absent rate limits, insecure session config, leaked NEXT_PUBLIC secrets, DEBUG=True in Django, APP_DEBUG in Laravel, dangerouslySetInnerHTML with user data.",
+  "category": "framework",
+  "version": "1.0.0",
+  "overlay": false,
+  "rules": [
+    {
+      "kind": "regex",
+      "id": "FW01",
+      "name": "helmet() Not Installed (Express)",
+      "severity": "Critical",
+      "note": "Express app without helmet — missing security headers: X-Content-Type-Options, X-Frame-Options, HSTS, CSP, and more.",
+      "remediation": "npm install helmet\\napp.use(helmet())",
+      "regex": "express\\(\\)",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "exclude_contains": ["helmet"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW02",
+      "name": "No Rate Limiting (Express)",
+      "severity": "High",
+      "note": "API endpoints without rate limiting — vulnerable to brute force and DoS attacks.",
+      "remediation": "npm install express-rate-limit\\napp.use(rateLimit({ windowMs: 15*60*1000, max: 100 }))",
+      "regex": "app\\.post",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "require_contains": ["express()"],
+      "exclude_contains": ["rateLimit", "rate-limit", "express-rate-limit"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW03",
+      "name": "No Request Size Limit (Express)",
+      "severity": "Medium",
+      "note": "express.json() without size limit — vulnerable to large payload DoS.",
+      "remediation": "app.use(express.json({ limit: '10kb' }))",
+      "regex": "express\\.json\\(\\)",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "exclude_contains": ["limit:"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW04",
+      "name": "Session Cookie Missing Secure Flag (Express)",
+      "severity": "High",
+      "note": "Session cookie without secure flag — transmitted over HTTP, interceptable on public WiFi.",
+      "remediation": "session({ cookie: { secure: true, httpOnly: true, sameSite: 'strict' } })",
+      "regex": "(?:express-session|session\\s*\\(\\s*\\{)",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "exclude_contains": ["secure: true", "secure:true"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW10",
+      "name": "No Security Headers in next.config (Next.js)",
+      "severity": "High",
+      "note": "Next.js config has no X-Frame-Options header configured. Missing clickjacking protection.",
+      "remediation": "Add headers() to next.config.js returning security header array. See: https://nextjs.org/docs/advanced-features/security-headers",
+      "regex": "^",
+      "scope": {
+        "path_patterns": ["**next.config*"]
+      },
+      "exclude_contains": ["X-Frame-Options"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW11",
+      "name": "Source Maps Enabled in Production (Next.js)",
+      "severity": "High",
+      "note": "Source maps expose original source code to anyone inspecting the browser. Attackers can read your entire codebase.",
+      "remediation": "Remove productionBrowserSourceMaps: true from next.config.js",
+      "regex": "(?:productionBrowserSourceMaps\\s*:\\s*true|devtool\\s*:)",
+      "scope": {
+        "path_patterns": ["**next.config*"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW12",
+      "name": "Secret in NEXT_PUBLIC_ Variable (Next.js)",
+      "severity": "Critical",
+      "note": "NEXT_PUBLIC_ vars are bundled into client JavaScript. Any secret here is visible to every user.",
+      "remediation": "Remove the NEXT_PUBLIC_ prefix. Access server-side only via process.env.SECRET_NAME in API routes.",
+      "regex": "NEXT_PUBLIC_\\w*(?:SECRET|KEY|TOKEN|PASSWORD|PRIVATE)\\w*\\s*=",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"],
+        "path_suffixes": [".env", ".env.local", ".env.production"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW20",
+      "name": "DEBUG = True in Django Settings",
+      "severity": "Critical",
+      "note": "Django debug mode exposes stack traces, SQL queries, and environment variables to any user on error.",
+      "remediation": "Set DEBUG = False in production. Use environment variable: DEBUG = os.environ.get('DEBUG', 'False') == 'True'",
+      "regex": "DEBUG\\s*=\\s*True",
+      "scope": {
+        "extensions": ["py", "pyw"],
+        "path_patterns": ["**settings*"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW21",
+      "name": "ALLOWED_HOSTS = ['*'] (Django)",
+      "severity": "High",
+      "note": "Wildcard ALLOWED_HOSTS — accepts requests for any hostname. Host header attacks possible.",
+      "remediation": "Set specific domains: ALLOWED_HOSTS = ['yourdomain.com', 'www.yourdomain.com']",
+      "regex": "ALLOWED_HOSTS\\s*=\\s*\\[\\s*['\"]\\*['\"]\\s*\\]",
+      "scope": {
+        "extensions": ["py", "pyw"],
+        "path_patterns": ["**settings*"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW22",
+      "name": "Default/Weak SECRET_KEY (Django)",
+      "severity": "Critical",
+      "note": "Django SECRET_KEY is the default or a weak placeholder. Used for signing sessions, CSRF tokens, and more.",
+      "remediation": "Generate: python -c \"from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())\"",
+      "regex": "SECRET_KEY[^\\n]*(?:django-insecure|changeme|your-secret)",
+      "scope": {
+        "extensions": ["py", "pyw"],
+        "path_patterns": ["**settings*"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW23",
+      "name": "HTTPS Not Enforced (Django)",
+      "severity": "High",
+      "note": "SECURE_SSL_REDIRECT not enabled or explicitly disabled — HTTP traffic not redirected to HTTPS.",
+      "remediation": "Add: SECURE_SSL_REDIRECT = True\\nSECURE_HSTS_SECONDS = 31536000",
+      "regex": "SECURE_SSL_REDIRECT\\s*=\\s*False",
+      "scope": {
+        "extensions": ["py", "pyw"],
+        "path_patterns": ["**settings*"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW30",
+      "name": "Debug Mode Enabled (Flask)",
+      "severity": "Critical",
+      "note": "Flask debug mode exposes the Werkzeug debugger — allows arbitrary code execution from the browser.",
+      "remediation": "Set debug=False in production. Use FLASK_DEBUG=0 environment variable.",
+      "regex": "debug\\s*=\\s*True",
+      "scope": {
+        "extensions": ["py", "pyw"]
+      },
+      "require_contains": ["flask"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW31",
+      "name": "Weak SECRET_KEY (Flask)",
+      "severity": "Critical",
+      "note": "Flask secret key is a weak/default value. Sessions can be forged.",
+      "remediation": "app.secret_key = os.environ['SECRET_KEY'] # Generate: python -c \"import secrets; print(secrets.token_hex(32))\"",
+      "regex": "secret_key[^\\n]*(?:'secret'|'changeme'|'dev'|\"secret\"|\"changeme\"|\"dev\")",
+      "regex_flags": "i",
+      "scope": {
+        "extensions": ["py", "pyw"]
+      },
+      "require_contains": ["flask"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW40",
+      "name": "CSRF Protection Partially Disabled (Rails)",
+      "severity": "High",
+      "note": "protect_from_forgery has exceptions — some actions are CSRF-unprotected.",
+      "remediation": "Remove except: clause or ensure excepted actions don't modify state.",
+      "regex": "protect_from_forgery[^\\n]*except\\s*:",
+      "scope": {
+        "extensions": ["rb"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW41",
+      "name": "force_ssl Disabled (Rails)",
+      "severity": "High",
+      "note": "SSL not enforced — HTTP traffic accepted.",
+      "remediation": "Set config.force_ssl = true in config/environments/production.rb",
+      "regex": "config\\.force_ssl\\s*=\\s*false",
+      "scope": {
+        "extensions": ["rb"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW50",
+      "name": "APP_DEBUG=true (Laravel)",
+      "severity": "Critical",
+      "note": "Laravel debug mode exposes stack traces, environment variables, and database queries.",
+      "remediation": "Set APP_DEBUG=false in production .env file.",
+      "regex": "APP_DEBUG\\s*=\\s*true",
+      "regex_flags": "i",
+      "scope": {
+        "path_suffixes": [".env"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW60",
+      "name": "dangerouslySetInnerHTML with User Data (React)",
+      "severity": "Critical",
+      "note": "User-controlled data passed to dangerouslySetInnerHTML — classic XSS vulnerability.",
+      "remediation": "Sanitize with DOMPurify: dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(userInput) }}",
+      "regex": "dangerouslySetInnerHTML\\s*=\\s*\\{\\s*\\{\\s*__html\\s*:\\s*(?:props|state|data|user|req|params|query|input)",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW61",
+      "name": "v-html Directive with Potential User Data (Vue)",
+      "severity": "High",
+      "note": "v-html renders raw HTML — XSS risk if the bound value contains user input.",
+      "remediation": "Use {{ interpolation }} for text. If HTML is needed, sanitize with DOMPurify first.",
+      "regex": "v-html",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs", "vue"]
+      },
+      "match_once": true
+    }
+  ]
+}

@@ -1,0 +1,257 @@
+{
+  "$schema": "../shared-rules/SCHEMA.md#v1",
+  "scanner_id": "vibe-pack",
+  "scanner_name": "Vibe Code Pack",
+  "scanner_description": "Detects patterns AI tools generate that ship to production — SQL concatenation, missing awaits on auth checks, weak fallbacks, commented-out security, debug modes, default Docker creds.",
+  "category": "vibe",
+  "version": "1.0.1",
+  "overlay": true,
+  "rules": [
+    {
+      "kind": "regex",
+      "id": "V48",
+      "name": "jwt.decode() Used Instead of jwt.verify()",
+      "severity": "Critical",
+      "note": "jwt.decode() does not validate the signature. Anyone can forge a valid-looking token. AI tools confuse decode() and verify() constantly.",
+      "remediation": "Replace jwt.decode(token) with jwt.verify(token, secret, { algorithms: ['HS256'] })",
+      "regex": "jwt\\.decode\\(",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "require_contains": ["jwt.decode("],
+      "exclude_contains": ["jwt.verify("],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "V49",
+      "name": "SQL Query Built from String Concatenation",
+      "severity": "Critical",
+      "note": "User input concatenated into SQL query — the #1 AI-generated vulnerability. Looks functional, fully exploitable via SQL injection.",
+      "remediation": "Use parameterized queries: db.query('SELECT * FROM users WHERE id = $1', [userId])",
+      "regex": "(?:(?:query|execute|exec)\\s*\\(\\s*['\"`].*?\\$\\{.*?\\}|(?:query|execute|exec)\\s*\\(\\s*.*?\\+\\s*(?:req\\.|request\\.|params|body|query)|(?:query|execute|exec)\\s*\\(\\s*['\"]SELECT.*?\\+\\s*|f['\"]SELECT\\s.*?\\{.*?\\})",
+      "regex_flags": "i",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs", "py", "pyw"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "V51",
+      "name": "Env Variable with Weak Fallback Default",
+      "severity": "Critical",
+      "note": "process.env.X || 'secret' — if env var missing in prod, app silently uses the weak default. AI adds this for dev convenience.",
+      "remediation": "Remove the fallback. Crash on startup if required env vars are missing: if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET required')",
+      "regex": "process\\.env\\.\\w+\\s*\\|\\|\\s*['\"](?:secret|password|changeme|your-?secret|default|test|dev|12345)",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "V35",
+      "name": "bcrypt Rounds Set Too Low",
+      "severity": "High",
+      "note": "bcrypt cost factor under 10 — brute-forceable in seconds on modern hardware. AI sets low rounds for 'speed during development.'",
+      "remediation": "Use minimum 12 rounds: bcrypt.genSalt(12). Recommended: 12-14 for 2024+ hardware.",
+      "regex": "(?:bcrypt|genSalt|gensalt)\\s*\\(\\s*([1-9])\\s*\\)",
+      "regex_flags": "i",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs", "py", "pyw"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "V36",
+      "name": "Session Secret Set to Placeholder Value",
+      "severity": "Critical",
+      "note": "Session secret is a well-known placeholder. AI generates these — they ship to production and allow session forging.",
+      "remediation": "Generate: require('crypto').randomBytes(64).toString('hex'). Store in env var.",
+      "regex": "(?:secret|session_secret)\\s*[:=]\\s*['\"](?:secret|your-?secret-?key|mysecret|change-?me|keyboard-?cat|ssshhh)['\"]",
+      "regex_flags": "i",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "V39",
+      "name": "TODO: Auth/Security Not Implemented",
+      "severity": "Critical",
+      "note": "Comment indicates security feature was planned but never implemented. Common AI pattern: generate a TODO, move on, ship.",
+      "remediation": "Implement the security feature before deploying. Don't ship TODOs.",
+      "regex": "(?://|#)\\s*(?:TODO|FIXME|HACK|XXX)\\s*:?\\s*(?:add|implement|fix|need)\\s*(?:auth|security|validation|permission|access\\s*control)",
+      "regex_flags": "i",
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "V40",
+      "name": "Auth Middleware Commented Out",
+      "severity": "Critical",
+      "note": "Authentication middleware is present but commented out. Likely disabled during testing and never re-enabled.",
+      "remediation": "Uncomment the auth middleware. Use environment-based bypasses instead of commenting out.",
+      "regex": "//\\s*(?:app|router)\\s*\\.use\\s*\\(\\s*(?:auth|authenticate|requireAuth|isAuthenticated|passport)",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "V44",
+      "name": "console.log of Sensitive Data",
+      "severity": "High",
+      "note": "Debug logging of passwords, tokens, or secrets left in code. Extremely common AI-generated debug pattern.",
+      "remediation": "Remove console.log of sensitive data. Use structured logging with redaction in production.",
+      "regex": "console\\.log\\s*\\([^)]*(?:password|token|secret|api_key|apiKey|auth|credential|ssn|credit_card)",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "V50",
+      "name": "Async Auth Check Without Await",
+      "severity": "Critical",
+      "note": "Auth check called but not awaited — returns Promise<true> which is truthy, so auth always passes. Silent bypass.",
+      "remediation": "Add await: const isAuth = await checkAuth(req). Ensure the check blocks the handler.",
+      "regex": "(?:isAuthenticated|requireAuth|checkAuth|verifyToken)\\s*\\([^)]*\\)\\s*(?:;|\\n)",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "context_filter": {
+        "type": "exclude_nearby_keyword",
+        "keywords": ["await", "return"],
+        "window_chars": 120,
+        "direction": "before"
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "V52",
+      "name": "CORS Set to Reflect Origin or Wildcard",
+      "severity": "High",
+      "note": "CORS reflects the requesting origin or uses wildcard '*'. Reflection nullifies CORS protection (critical when paired with credentials). Wildcard is sometimes intentional on public read-only endpoints.",
+      "remediation": "Set explicit allowed origins: cors({ origin: ['https://yourdomain.com'] }). If wildcard is intentional on a public read-only endpoint (badges, public stats), suppress as intentional.",
+      "regex": "(?:origin|access-control-allow-origin)\\s*[:=]\\s*(?:req\\.headers\\.origin|request\\.headers\\.origin|\\*\\s)",
+      "regex_flags": "i",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "V55",
+      "name": "Missing await on Security Check in Condition",
+      "severity": "Critical",
+      "note": "Async security check used in if() without await. Promise object is truthy — auth always passes regardless of actual result.",
+      "remediation": "Add await: if (await isAuthenticated(req)) { ... }",
+      "regex": "if\\s*\\(\\s*(?:isAuthenticated|isAuthorized|hasPermission|checkRole|verifyToken)\\s*\\(",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "context_filter": {
+        "type": "exclude_nearby_keyword",
+        "keywords": ["await"],
+        "window_chars": 120,
+        "direction": "before"
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "V56a",
+      "name": "Debug Mode in Production Config (NODE_ENV=development)",
+      "severity": "High",
+      "note": "NODE_ENV set to development in a config file that may be deployed to production. Exposes stack traces, internal paths, and debug endpoints.",
+      "remediation": "Set NODE_ENV=production in production configs.",
+      "regex": "NODE_ENV\\s*=\\s*development",
+      "regex_flags": "i",
+      "scope": {
+        "path_patterns": ["**.env*", "**.yml", "**.yaml", "**docker-compose*"],
+        "path_suffixes": ["Dockerfile"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "V56b",
+      "name": "Debug Mode in Production Config (FLASK_DEBUG=1)",
+      "severity": "High",
+      "note": "Flask debug enabled in a config file that may be deployed to production. Exposes the Werkzeug debugger, which allows arbitrary code execution.",
+      "remediation": "Set FLASK_DEBUG=0 in production configs.",
+      "regex": "FLASK_DEBUG\\s*=\\s*1",
+      "regex_flags": "i",
+      "scope": {
+        "path_patterns": ["**.env*", "**.yml", "**.yaml", "**docker-compose*"],
+        "path_suffixes": ["Dockerfile"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "V56c",
+      "name": "Debug Mode in Production Config (DEBUG=True)",
+      "severity": "High",
+      "note": "Python DEBUG=True in a config file that may be deployed to production. Common Django/Flask pitfall.",
+      "remediation": "Set DEBUG=False in production configs.",
+      "regex": "DEBUG\\s*=\\s*[Tt]rue",
+      "scope": {
+        "path_patterns": ["**.env*", "**.yml", "**.yaml", "**docker-compose*"],
+        "path_suffixes": ["Dockerfile"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "V56d",
+      "name": "Debug Mode in Production Config (APP_DEBUG=true)",
+      "severity": "High",
+      "note": "Laravel APP_DEBUG=true in a config file that may be deployed to production. Exposes stack traces, env vars, and DB queries.",
+      "remediation": "Set APP_DEBUG=false in production configs.",
+      "regex": "APP_DEBUG\\s*=\\s*true",
+      "regex_flags": "i",
+      "scope": {
+        "path_patterns": ["**.env*", "**.yml", "**.yaml", "**docker-compose*"],
+        "path_suffixes": ["Dockerfile"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "V57",
+      "name": "Default Database Credentials in Docker Config",
+      "severity": "Critical",
+      "note": "Default/weak database password in docker-compose.yml or Dockerfile. If this file is committed, anyone can access the database.",
+      "remediation": "Use a strong random password. Reference env vars: ${DB_PASSWORD} with .env file.",
+      "regex": "(?:POSTGRES_PASSWORD|MYSQL_ROOT_PASSWORD|MONGO_INITDB_ROOT_PASSWORD)\\s*[:=]\\s*(?:password|root|admin|123456|changeme|test|default)",
+      "regex_flags": "i",
+      "scope": {
+        "path_patterns": ["**docker-compose*"],
+        "path_suffixes": ["Dockerfile"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "V11",
+      "name": "Firebase Open Read/Write Rules",
+      "severity": "Critical",
+      "note": "Firebase rules allow read/write to anyone. Every person on the internet can read and write your entire database.",
+      "remediation": "Replace with ownership-based rules: allow read, write: if request.auth != null && request.auth.uid == resource.data.userId;",
+      "regex": "allow\\s+read,\\s*write\\s*(?::\\s*if\\s+true|;)",
+      "scope": {
+        "path_suffixes": ["firestore.rules", "database.rules", "storage.rules"]
+      },
+      "match_once": true
+    }
+  ]
+}

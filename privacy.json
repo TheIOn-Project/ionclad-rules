@@ -1,0 +1,195 @@
+{
+  "$schema": "../shared-rules/SCHEMA.md#v1",
+  "scanner_id": "privacy",
+  "scanner_name": "Privacy & Compliance",
+  "scanner_description": "GDPR, CCPA, and app-store compliance checks — PII in logs, analytics without consent, tracking pixels without gates, cookies without banners, missing privacy policy references, Apple ATT, Google Data Safety.",
+  "category": "privacy",
+  "version": "1.0.0",
+  "overlay": true,
+  "rules": [
+    {
+      "kind": "regex",
+      "id": "P01",
+      "name": "PII Logged to Console",
+      "severity": "High",
+      "note": "Personally identifiable information (PII) is being logged. Log aggregation services store this data permanently, creating GDPR/CCPA liability.",
+      "remediation": "Remove PII from log statements. Use structured logging with automatic PII redaction.",
+      "regex": "console\\.log\\s*\\([^)]*(?:email|phone|ssn|social_security|credit_card|address|dob|date_of_birth)\\b",
+      "regex_flags": "i",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "py", "rb", "php", "java", "kt", "swift", "go", "cs"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "P02",
+      "name": "PII Sent to Logger",
+      "severity": "High",
+      "note": "Personally identifiable information sent to structured logger. Log aggregation services store this permanently, creating GDPR/CCPA liability.",
+      "remediation": "Remove PII from log statements. Use structured logging with automatic PII redaction.",
+      "regex": "(?:logger|log|logging)\\.\\w+\\s*\\([^)]*(?:email|phone|ssn|password|credit_card)\\b",
+      "regex_flags": "i",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "py", "rb", "php", "java", "kt", "swift", "go", "cs"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "P03",
+      "name": "PII in Print Statement",
+      "severity": "High",
+      "note": "PII in print statement — the output may be captured by log collectors, terminal history, or stdout redirection. GDPR/CCPA liability.",
+      "remediation": "Remove PII from print statements. Use structured logging with redaction.",
+      "regex": "print\\s*\\([^)]*(?:password|token|secret|ssn|credit_card)\\b",
+      "regex_flags": "i",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "py", "rb", "php", "java", "kt", "swift", "go", "cs"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "P10",
+      "name": "Analytics Loaded Without Consent Check",
+      "severity": "Medium",
+      "note": "Analytics library initialized without any visible consent mechanism. GDPR requires explicit consent before tracking. CCPA requires opt-out capability.",
+      "remediation": "Implement a consent banner. Only initialize analytics after user consents. Use a consent management platform or build a simple cookie consent flow.",
+      "regex": "(?:gtag\\s*\\(|\\bga\\s*\\(|analytics\\.track\\s*\\(|mixpanel\\.track\\s*\\(|amplitude\\.logEvent\\s*\\(|fbq\\s*\\(|_paq\\.push\\s*\\(|plausible\\s*\\(|posthog\\.capture\\s*\\()",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "py", "rb", "php", "java", "kt", "swift", "go", "cs", "html"]
+      },
+      "exclude_contains": ["consent", "cookie", "gdpr", "optIn", "opt_in", "accepted"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "P11",
+      "name": "Tracking Pixel Loaded Without Consent",
+      "severity": "High",
+      "note": "Tracking pixel loaded without consent gate. Violates GDPR Art. 6 (lawful basis) and ePrivacy directive.",
+      "remediation": "Conditionally load tracking pixels only after user consent is obtained.",
+      "regex": "(?:facebook\\.com/tr\\?|googleads\\.g\\.doubleclick|bat\\.bing\\.com/action|snap\\.licdn\\.com/li\\.lms-analytics|tiktok\\.com/i18n/pixel)",
+      "scope": {
+        "extensions": ["html", "jsx", "tsx"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "P12",
+      "name": "PII in URL Parameters",
+      "severity": "High",
+      "note": "Email, phone, or user ID passed as URL query parameters. URLs are logged by servers, proxies, browsers, and analytics — PII exposure.",
+      "remediation": "Pass PII in request body (POST) or headers, never in URL parameters.",
+      "regex": "(?:url|href|redirect|link)\\s*[=+]\\s*.*(?:email|phone|ssn|userId|user_id)\\s*[=&]",
+      "regex_flags": "i",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "py", "rb", "php", "java", "kt", "swift", "go", "cs"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "P13",
+      "name": "Cookies Set Without Consent Banner",
+      "severity": "High",
+      "note": "Cookies are being set without any visible consent mechanism. EU ePrivacy directive and GDPR require informed consent for non-essential cookies.",
+      "remediation": "Implement a cookie consent banner that blocks non-essential cookies until user accepts.",
+      "regex": "(?:document\\.cookie|setCookie|js-cookie)",
+      "scope": {
+        "extensions": ["html"],
+        "path_patterns": ["**index*"]
+      },
+      "exclude_contains": ["cookie-consent", "cookieConsent", "cookie-banner", "CookieBanner", "consent", "gdpr"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "P14",
+      "name": "No Privacy Policy Link Detected",
+      "severity": "Medium",
+      "note": "No reference to a privacy policy found in the main application layout. Privacy policies are legally required by GDPR, CCPA, and app stores.",
+      "remediation": "Add a link to your privacy policy in the footer or settings page.",
+      "regex": "^",
+      "scope": {
+        "path_suffixes": ["index.html"],
+        "path_patterns": ["**app.*", "**layout.*", "**footer.*"]
+      },
+      "exclude_contains": ["privacy"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "P15",
+      "name": "PII in Error Tracking Context",
+      "severity": "High",
+      "note": "User PII attached to error tracker reports. Error tracking services store this data, creating a PII liability outside your control.",
+      "remediation": "Scrub PII from error tracker context. Most services support beforeSend hooks for data sanitization.",
+      "regex": "(?:Sentry\\.(?:captureException|captureMessage)|Bugsnag\\.notify|rollbar\\.error|airbrake\\.notify)[^\\n]*(?:user|email|password|token|session)",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "py", "rb", "php", "java", "kt", "swift", "go", "cs"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "P20",
+      "name": "No Data Retention/Deletion Strategy",
+      "severity": "Medium",
+      "note": "Database schema tracks creation time but has no deletion/expiry mechanism. GDPR requires data minimization and right to erasure.",
+      "remediation": "Add soft-delete columns (deleted_at), TTL/expiry fields, or implement a data retention policy with automated cleanup.",
+      "regex": "created_at",
+      "scope": {
+        "path_patterns": ["**database*", "**schema*", "**migration*"]
+      },
+      "exclude_contains": ["deleted_at", "expires_at", "retention"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "P21",
+      "name": "CCPA: No 'Do Not Sell' Mechanism",
+      "severity": "High",
+      "note": "CCPA referenced but no 'Do Not Sell My Personal Information' link found. Required for California users.",
+      "remediation": "Add a 'Do Not Sell My Personal Information' link accessible from every page.",
+      "regex": "(?:California|CCPA|ccpa)",
+      "scope": {
+        "extensions": ["html"],
+        "path_patterns": ["**footer*", "**privacy*"]
+      },
+      "exclude_contains": ["do-not-sell", "doNotSell", "opt-out"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "P25",
+      "name": "Apple ATT Not Implemented",
+      "severity": "Critical",
+      "note": "AdSupport framework imported but App Tracking Transparency prompt not implemented. Apple will reject the app.",
+      "remediation": "Import AppTrackingTransparency and call ATTrackingManager.requestTrackingAuthorization() before accessing IDFA.",
+      "regex": "(?:AdSupport|ATTrackingManager)",
+      "scope": {
+        "extensions": ["swift"],
+        "path_patterns": ["**info.plist"]
+      },
+      "exclude_contains": ["requestTrackingAuthorization"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "P26",
+      "name": "Sensitive Android Permission — Data Safety Required",
+      "severity": "High",
+      "note": "AndroidManifest requests sensitive permissions but no data safety section configured. Google Play requires Data Safety declarations for all data collection.",
+      "remediation": "Complete the Data Safety form in Google Play Console for each data type collected.",
+      "regex": "(?:ACCESS_FINE_LOCATION|ACCESS_COARSE_LOCATION|READ_CONTACTS|CAMERA|RECORD_AUDIO|READ_PHONE_STATE)",
+      "scope": {
+        "path_patterns": ["**androidmanifest*", "**AndroidManifest*"]
+      },
+      "exclude_contains": ["data_safety"],
+      "match_once": true
+    }
+  ]
+}
