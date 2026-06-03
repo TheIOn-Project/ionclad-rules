@@ -14,12 +14,13 @@
       "severity": "High",
       "note": "Personally identifiable information (PII) is being logged. Log aggregation services store this data permanently, creating GDPR/CCPA liability.",
       "remediation": "Remove PII from log statements. Use structured logging with automatic PII redaction.",
-      "regex": "console\\.log\\s*\\([^)]*(?:email|phone|ssn|social_security|credit_card|address|dob|date_of_birth)\\b",
+      "regex": "console\\.log\\s*\\([^)]*?[,:=${]\\s*['\"`]?\\s*(?:[a-z_][\\w]*\\.)*(?:email|phone|ssn|social_security|credit_card|date_of_birth|mailing_address|street_address|home_address)\\w*\\b",
       "regex_flags": "i",
       "scope": {
         "extensions": ["js", "jsx", "ts", "tsx", "py", "rb", "php", "java", "kt", "swift", "go", "cs"]
       },
-      "match_once": true
+      "match_once": true,
+      "note_rationale": "Tightened May 2026 — keyword must be in argument/interpolation position (after `,` `:` `=` `$` or `{`), not in a message string. Dropped bare `address` and `dob` (too generic — `IP address`, `address book`)."
     },
     {
       "kind": "regex",
@@ -28,7 +29,7 @@
       "severity": "High",
       "note": "Personally identifiable information sent to structured logger. Log aggregation services store this permanently, creating GDPR/CCPA liability.",
       "remediation": "Remove PII from log statements. Use structured logging with automatic PII redaction.",
-      "regex": "(?:logger|log|logging)\\.\\w+\\s*\\([^)]*(?:email|phone|ssn|password|credit_card)\\b",
+      "regex": "(?:logger|log|logging)\\.\\w+\\s*\\([^)]*?[,:=${]\\s*['\"`]?\\s*(?:[a-z_][\\w]*\\.)*(?:email|phone|ssn|credit_card)\\w*\\b",
       "regex_flags": "i",
       "scope": {
         "extensions": ["js", "jsx", "ts", "tsx", "py", "rb", "php", "java", "kt", "swift", "go", "cs"]

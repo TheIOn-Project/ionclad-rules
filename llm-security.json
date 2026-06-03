@@ -1,0 +1,340 @@
+{
+  "$schema": "../shared-rules/SCHEMA.md#v1",
+  "scanner_id": "llm-security",
+  "scanner_name": "AI/LLM Security",
+  "scanner_description": "Detects prompt injection, PII leaks to LLM vendors, unsanitized AI output rendered as HTML, unsafe function-calling tools, cost/DoS vectors, and other AI-using-application risks.",
+  "category": "llm-security",
+  "version": "1.0.0",
+  "overlay": true,
+  "rules": [
+    {
+      "kind": "regex",
+      "id": "LLM01",
+      "name": "User Input Interpolated Into OpenAI Prompt (Template Literal)",
+      "severity": "Critical",
+      "note": "User-controlled input is interpolated directly into a message sent to OpenAI. Attackers can override your system instructions via prompt injection (e.g., 'Ignore previous instructions and...').",
+      "remediation": "Put user content in its own user-role message — never concatenate it into the system prompt or another user message. Add length limits and consider a refusal layer on the output. Reference: https://owasp.org/www-project-top-10-for-large-language-model-applications/",
+      "regex": "content\\s*:\\s*[`][^`]*\\$\\{\\s*(?:req\\.|request\\.|userInput|user_input|userMessage|user_message|input\\.|prompt\\.|query\\.|body\\.|params\\.)",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "require_contains": ["completions.create"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "LLM02",
+      "name": "User Input Interpolated Into Anthropic Prompt (Template Literal)",
+      "severity": "Critical",
+      "note": "User-controlled input is interpolated directly into a Claude message. Prompt-injection attackers can override your system prompt with crafted input.",
+      "remediation": "Pass user content via a separate user-role message. Use Anthropic's `system` parameter for instructions — never mix instructions and untrusted text in one string. Reference: https://docs.anthropic.com/en/docs/test-and-evaluate/strengthen-guardrails",
+      "regex": "content\\s*:\\s*[`][^`]*\\$\\{\\s*(?:req\\.|request\\.|userInput|user_input|userMessage|user_message|input\\.|prompt\\.|query\\.|body\\.|params\\.)",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "require_contains": ["messages.create"],
+      "exclude_contains": ["completions.create"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "LLM03",
+      "name": "User Input in System-Role LLM Message",
+      "severity": "Critical",
+      "note": "A system-role message contains an interpolated value from the request. User input belongs in the user role — putting it in the system role lets attackers rewrite the assistant's instructions.",
+      "remediation": "Keep the system message static. Pass all user content via { role: 'user', content: ... } so the model treats it as data, not instructions.",
+      "regex": "role\\s*:\\s*['\"]system['\"][^}]{0,200}content\\s*:\\s*[`'\"][^`'\"]*\\$\\{",
+      "regex_flags": "s",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "LLM04",
+      "name": "Python f-string LLM Prompt With User Input",
+      "severity": "Critical",
+      "note": "An f-string concatenates user input directly into an LLM prompt. The same prompt-injection risk as JS template literals — user text can override system instructions.",
+      "remediation": "Pass user content as a separate `{'role': 'user', 'content': user_input}` message instead of f-stringing it into a wrapper. Validate length and consider a refusal layer on the output.",
+      "regex": "f['\"]{1,3}[^'\"]{0,400}\\{\\s*(?:request\\.|user_input|user_message|user_query|prompt_input|message\\.|body\\[|params\\[)",
+      "scope": {
+        "extensions": ["py", "pyw"]
+      },
+      "require_contains": ["openai", "anthropic", "claude", "completions.create", "messages.create"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "LLM05",
+      "name": "System Prompt Hardcoded in Frontend Code",
+      "severity": "High",
+      "note": "A long system prompt sits in client-side bundle code. Anyone who opens DevTools can read it — that lets attackers craft targeted jailbreaks for your specific instructions.",
+      "remediation": "Move all system prompts to server-side code. The browser should only post raw user messages — the server attaches the system prompt before forwarding to the model.",
+      "regex": "['\"](?:You are (?:an? |the )?(?:AI |assistant|helpful|expert)|Act as|You will (?:act|behave|respond)|Your (?:role|task|job) is)[^'\"]{40,}['\"]",
+      "regex_flags": "i",
+      "scope": {
+        "extensions": ["jsx", "tsx", "vue", "svelte", "html"]
+      },
+      "exclude_path_suffixes": [".test.js", ".test.ts", ".spec.js", ".spec.ts"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "LLM06",
+      "name": "Email Address Pattern Sent to LLM Vendor",
+      "severity": "High",
+      "note": "Code constructs an LLM message that includes a raw email address pattern. Sending PII to OpenAI/Anthropic without redaction may violate GDPR, CCPA, or your own privacy policy.",
+      "remediation": "Redact or hash emails before sending to the model. If the LLM legitimately needs the email, document this in your privacy policy and enable your vendor's zero-retention setting.",
+      "regex": "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs", "py", "pyw"]
+      },
+      "require_contains": ["completions.create", "messages.create"],
+      "value_suppressions": [
+        { "type": "placeholder_fragments", "fragments": ["example.com", "test@", "user@example", "noreply@", "support@", "your-email"] }
+      ],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "LLM07",
+      "name": "SSN Pattern in LLM Message Construction",
+      "severity": "Critical",
+      "note": "A US Social Security Number pattern appears in code that builds an LLM message. Sending SSNs to a third-party LLM vendor is almost certainly a compliance violation.",
+      "remediation": "Redact SSNs before any LLM call. If your use case truly requires SSN, you need a self-hosted model and a documented legal basis — not a public API.",
+      "regex": "\\b\\d{3}-\\d{2}-\\d{4}\\b",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs", "py", "pyw"]
+      },
+      "require_contains": ["completions.create", "messages.create"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "LLM08",
+      "name": "Credit Card Number Pattern in LLM Message Construction",
+      "severity": "Critical",
+      "note": "A 16-digit number consistent with a credit card pattern appears in an LLM call site. Sending card data to a third-party LLM vendor breaks PCI DSS — this alone is enough to invalidate compliance.",
+      "remediation": "Never send raw card numbers to an LLM. Use a tokenized reference (e.g., Stripe customer ID) instead. Mask all but the last four digits if you must show the user.",
+      "regex": "\\b(?:4\\d{3}|5[1-5]\\d{2}|3[47]\\d{2}|6(?:011|5\\d{2}))[\\s-]?\\d{4}[\\s-]?\\d{4}[\\s-]?\\d{4}\\b",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs", "py", "pyw"]
+      },
+      "require_contains": ["completions.create", "messages.create"],
+      "value_suppressions": [
+        { "type": "placeholder_fragments", "fragments": ["4242 4242", "4242-4242", "4242424242", "0000 0000", "1111 1111"] }
+      ],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "LLM09",
+      "name": "LLM Response Rendered via innerHTML (XSS)",
+      "severity": "Critical",
+      "note": "Model output is written to innerHTML. The model can produce arbitrary HTML — including <script> tags, event handlers, or javascript: URLs — leading to XSS. A prompt-injected response turns into client-side code execution.",
+      "remediation": "Render LLM output as plain text (`textContent`). If you need formatting, run the output through DOMPurify or a strict markdown renderer with HTML disabled.",
+      "regex": "\\.innerHTML\\s*=\\s*(?:response|completion|completion\\.choices|message|messageContent|assistantMessage|ai_response|aiResponse|llm|llmResponse|model_output|modelOutput|chat|chatMessage|reply)",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs", "vue", "svelte"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "LLM10",
+      "name": "LLM Response in dangerouslySetInnerHTML",
+      "severity": "Critical",
+      "note": "Model output flows into React's dangerouslySetInnerHTML. Any HTML the model produces is rendered unsanitized — including scripts and event handlers. Prompt injection escalates to stored XSS.",
+      "remediation": "Render LLM output as React children (text) or run it through DOMPurify before injecting. Never trust model output to be HTML-safe even if your system prompt forbids tags.",
+      "regex": "dangerouslySetInnerHTML\\s*=\\s*\\{\\s*\\{\\s*__html\\s*:\\s*(?:response|completion|completion\\.choices|message|messageContent|assistantMessage|ai_response|aiResponse|llm|llmResponse|model_output|modelOutput|chat|chatMessage|reply)",
+      "scope": {
+        "extensions": ["jsx", "tsx"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "LLM11",
+      "name": "Markdown LLM Output Rendered Without Sanitizer",
+      "severity": "High",
+      "note": "Model output is rendered as markdown without a sanitization step. Most markdown renderers allow inline HTML by default — the model can emit <script>, <iframe>, or onerror handlers, leading to XSS.",
+      "remediation": "Configure your markdown renderer to disable HTML (e.g., `marked.setOptions({ sanitize: true })`, `markdown-it({ html: false })`) AND pipe the output through DOMPurify before injecting into the DOM.",
+      "regex": "(?:marked|markdownit|markdown_it|markdown\\.parse|ReactMarkdown|remark|micromark)\\s*[\\(\\.]",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "require_contains": ["completions.create", "messages.create"],
+      "exclude_contains": ["DOMPurify", "dompurify", "sanitize-html", "sanitize_html"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "LLM12",
+      "name": "LLM Function-Calling Tool Shells Out (child_process)",
+      "severity": "Critical",
+      "note": "A file that defines LLM function-calling tools also uses child_process / exec. If the tool handler invokes a shell with model-controlled arguments, the model can execute arbitrary commands on your server.",
+      "remediation": "Never give an LLM a 'run shell command' tool in production. If you need command-like behavior, expose narrow, parameterized tools (e.g., `list_files(directory)`) and validate the directory against an allowlist.",
+      "regex": "(?:child_process|exec(?:Sync)?|spawn(?:Sync)?)\\s*[\\.\\(]",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "require_contains": ["tools:", "function_call", "tool_calls", "function:"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "LLM13",
+      "name": "LLM Function-Calling Tool Uses eval()",
+      "severity": "Critical",
+      "note": "A file that defines LLM tools also calls eval() or new Function(). Combined with function-calling, this is full RCE: the model produces a string, your code evaluates it.",
+      "remediation": "Remove eval/new Function entirely. If you need dynamic dispatch, use a switch statement keyed off the tool name with a hardcoded handler table.",
+      "regex": "\\b(?:eval|new\\s+Function)\\s*\\(",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "require_contains": ["tools:", "function_call", "tool_calls", "function:"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "LLM14",
+      "name": "LLM Function-Calling Tool With Unrestricted Filesystem Write",
+      "severity": "High",
+      "note": "A file that defines LLM tools also uses fs.writeFile / fs.writeFileSync. If the model controls the path or content, it can overwrite source files, drop a webshell, or escape your data directory.",
+      "remediation": "Constrain writes to a single sandbox directory and validate the resolved path stays inside it. Use `path.resolve` and a `startsWith` check on the sandbox root. Never accept absolute paths from the model.",
+      "regex": "fs\\.(?:writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream)\\s*\\(",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "require_contains": ["tools:", "function_call", "tool_calls", "function:"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "LLM15",
+      "name": "Missing max_tokens on LLM Completion Call",
+      "severity": "Medium",
+      "note": "An OpenAI/Anthropic call without max_tokens lets the model emit responses up to the context window. One slow loop or recursive agent can burn through your monthly budget in minutes.",
+      "remediation": "Always set max_tokens (or max_output_tokens). Pick a value tied to your UX (e.g., 500 for a chat reply, 2000 for a summary). Add a per-user daily token budget at the application layer.",
+      "regex": "(?:chat\\.completions\\.create|messages\\.create)\\s*\\(\\s*\\{",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "exclude_contains": ["max_tokens", "maxTokens", "max_output_tokens", "maxOutputTokens"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "LLM16",
+      "name": "Hardcoded Deprecated Model Snapshot",
+      "severity": "Medium",
+      "note": "A dated model snapshot (e.g., gpt-3.5-turbo-0613, gpt-4-0314, claude-2.0) is hardcoded. OpenAI and Anthropic deprecate snapshots on a published schedule — when yours sunsets, every call throws 404.",
+      "remediation": "Pin a current model alias (gpt-4o, claude-3-5-sonnet-latest) instead of a dated snapshot, or read the model name from config so you can rotate without a code change. Subscribe to the vendor's deprecation feed.",
+      "regex": "['\"](?:gpt-3\\.5-turbo-0613|gpt-3\\.5-turbo-0301|gpt-3\\.5-turbo-16k-0613|gpt-4-0314|gpt-4-0613|gpt-4-32k-0314|gpt-4-32k-0613|gpt-4-1106-preview|gpt-4-vision-preview|text-davinci-003|text-davinci-002|claude-1|claude-1\\.[0-9]+|claude-instant-1(?:\\.[0-9]+)?|claude-2\\.0|claude-2\\.1)['\"]",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs", "py", "pyw"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "LLM17",
+      "name": "Model Name Read From User Input",
+      "severity": "High",
+      "note": "The model parameter is set from the request body/query. A malicious client can request the most expensive model on every call — a direct billing-DoS vector.",
+      "remediation": "Set the model server-side from a fixed allowlist. If users genuinely choose a model, map a short opaque ID (e.g., 'fast' / 'smart') to the real model name in your code.",
+      "regex": "model\\s*:\\s*(?:req\\.body|req\\.query|req\\.params|request\\.body|request\\.json|body\\.model|query\\.model|params\\.model|userInput|user_input)",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs", "py", "pyw"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "LLM18",
+      "name": "Streaming LLM Response Without Abort Signal",
+      "severity": "Medium",
+      "note": "A streaming completion is created without an AbortSignal. If the client disconnects, the request keeps streaming server-side — you pay for the full response and may exhaust your connection pool under load.",
+      "remediation": "Pass `signal: req.signal` (Express 5 / Fastify) or wire an AbortController to your route handler. Most SDKs accept a `signal` option on the create() call.",
+      "regex": "(?:chat\\.completions\\.create|messages\\.create|messages\\.stream)\\s*\\(\\s*\\{[^}]*stream\\s*:\\s*true",
+      "regex_flags": "s",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "exclude_contains": ["AbortController", "AbortSignal", "signal:", "signal :"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "LLM19",
+      "name": "LangChain Shell/Exec Tool Imported",
+      "severity": "Critical",
+      "note": "LangChain's ShellTool (or a Python equivalent) lets the agent execute arbitrary shell commands. In an internet-facing app this is functionally equivalent to RCE-as-a-service.",
+      "remediation": "Remove ShellTool from your agent's tool list. Build narrow, validated tools for the specific operations the agent actually needs (e.g., `list_files(dir)` with an allowlist, not a raw shell).",
+      "regex": "(?:ShellTool|@langchain/community/tools/shell|langchain\\.tools\\.shell|langchain_community\\.tools\\.shell|terminal_tool|TerminalTool)",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs", "py", "pyw"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "LLM20",
+      "name": "LLM API Key in Client-Side Code",
+      "severity": "Critical",
+      "note": "OpenAI/Anthropic SDK is initialized with an API key inside a file that ships to the browser. The key will appear verbatim in your bundle — anyone with DevTools can extract it and run up your bill.",
+      "remediation": "Move all LLM calls to a server route. The frontend posts the user message to your backend; the backend adds the API key and forwards to the model. Rotate the leaked key after fixing.",
+      "regex": "new\\s+(?:OpenAI|Anthropic|Cohere|Mistral)\\s*\\(",
+      "scope": {
+        "extensions": ["jsx", "tsx", "vue", "svelte"]
+      },
+      "require_contains": ["apiKey", "api_key", "Authorization"],
+      "exclude_contains": ["dangerouslyAllowBrowser: false", "process.env"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "LLM21",
+      "name": "dangerouslyAllowBrowser Set on LLM SDK",
+      "severity": "Critical",
+      "note": "The OpenAI / Anthropic SDK exposes a `dangerouslyAllowBrowser: true` escape hatch. Setting it in client-side code intentionally bypasses the SDK's built-in API-key-leak protection — the key ends up in every user's browser bundle.",
+      "remediation": "Remove `dangerouslyAllowBrowser: true`. Run the SDK on a server route instead. If this is a developer-only tool, gate the bundle behind authentication and rotate the key on every release.",
+      "regex": "dangerouslyAllowBrowser\\s*:\\s*true",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "LLM22",
+      "name": "Recursive Agent Loop Without Iteration Cap",
+      "severity": "High",
+      "note": "An agent loop calls the model repeatedly without a maximum-iteration guard. A self-prompting agent or a prompt-injection that says 'call yourself again' can spin until the budget runs out.",
+      "remediation": "Wrap the agent loop in `for (let i = 0; i < MAX_ITERATIONS; i++)` with a hard cap (typically 5–10). LangChain exposes `maxIterations` on AgentExecutor — set it explicitly.",
+      "regex": "while\\s*\\(\\s*(?:true|!\\s*done|!\\s*finished|!\\s*complete|tool_calls\\.length|finishReason\\s*!==\\s*['\"]stop['\"]|finish_reason\\s*!=\\s*['\"]stop['\"])",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "require_contains": ["completions.create", "messages.create", "AgentExecutor"],
+      "exclude_contains": ["maxIterations", "max_iterations", "MAX_ITER", "maxSteps", "max_steps"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "LLM23",
+      "name": "Embedding API Called Without Input Length Limit",
+      "severity": "Medium",
+      "note": "An embedding call passes user input directly to the model without length validation. A malicious 8000-token paste burns through your embedding budget and may exceed model context.",
+      "remediation": "Truncate or reject inputs over a fixed character/token budget before calling embeddings.create. Most embedding models cap at 8192 tokens — enforce a smaller app-level limit (e.g., 2000 tokens).",
+      "regex": "embeddings\\.create\\s*\\(\\s*\\{[^}]*input\\s*:\\s*(?:req\\.body|req\\.query|request\\.body|body\\.|query\\.|params\\.|userInput|user_input|userMessage|user_message)",
+      "regex_flags": "s",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs", "py", "pyw"]
+      },
+      "exclude_contains": [".slice(0,", ".substring(0,", ".substr(0,", "len(", "encode("],
+      "match_once": true
+    }
+  ]
+}

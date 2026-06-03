@@ -2,9 +2,9 @@
   "$schema": "../shared-rules/SCHEMA.md#v1",
   "scanner_id": "vibe-pack",
   "scanner_name": "Vibe Code Pack",
-  "scanner_description": "Detects patterns AI tools generate that ship to production — SQL concatenation, missing awaits on auth checks, weak fallbacks, commented-out security, debug modes, default Docker creds.",
+  "scanner_description": "Detects patterns AI tools generate that ship to production — SQL concatenation, missing awaits on auth checks, weak fallbacks, commented-out security, debug modes, default Docker creds, cryptography misuse (Math.random for tokens, MD5/SHA1 for passwords, ECB mode, hardcoded IVs).",
   "category": "vibe",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "overlay": true,
   "rules": [
     {
@@ -54,9 +54,9 @@
       "id": "V35",
       "name": "bcrypt Rounds Set Too Low",
       "severity": "High",
-      "note": "bcrypt cost factor under 10 — brute-forceable in seconds on modern hardware. AI sets low rounds for 'speed during development.'",
-      "remediation": "Use minimum 12 rounds: bcrypt.genSalt(12). Recommended: 12-14 for 2024+ hardware.",
-      "regex": "(?:bcrypt|genSalt|gensalt)\\s*\\(\\s*([1-9])\\s*\\)",
+      "note": "bcrypt cost factor under 10 — brute-forceable in seconds on modern hardware. Catches both bcrypt(8) and bcrypt.hash(password, 8) forms. AI sets low rounds for 'speed during development.'",
+      "remediation": "Use minimum 12 rounds: bcrypt.genSalt(12) / bcrypt.hash(pw, 12). Recommended: 12-14 for 2024+ hardware.",
+      "regex": "(?:bcrypt\\.(?:hash|hashSync|genSalt|genSaltSync)|bcrypt|genSalt|gensalt)\\s*\\((?:[^,)]*,\\s*)?([1-9])\\s*\\)",
       "regex_flags": "i",
       "scope": {
         "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs", "py", "pyw"]
@@ -138,8 +138,8 @@
       "id": "V52",
       "name": "CORS Set to Reflect Origin or Wildcard",
       "severity": "High",
-      "note": "CORS reflects the requesting origin or uses wildcard '*'. Reflection nullifies CORS protection (critical when paired with credentials). Wildcard is sometimes intentional on public read-only endpoints.",
-      "remediation": "Set explicit allowed origins: cors({ origin: ['https://yourdomain.com'] }). If wildcard is intentional on a public read-only endpoint (badges, public stats), suppress as intentional.",
+      "note": "CORS dynamically reflects the requesting origin or uses wildcard — nullifies all CORS protection. AI does this to 'fix' CORS errors.",
+      "remediation": "Set explicit allowed origins: cors({ origin: ['https://yourdomain.com'] })",
       "regex": "(?:origin|access-control-allow-origin)\\s*[:=]\\s*(?:req\\.headers\\.origin|request\\.headers\\.origin|\\*\\s)",
       "regex_flags": "i",
       "scope": {
@@ -251,6 +251,143 @@
       "scope": {
         "path_suffixes": ["firestore.rules", "database.rules", "storage.rules"]
       },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "V60",
+      "name": "Math.random() Used for Token / Secret / ID Generation",
+      "severity": "Critical",
+      "note": "Math.random() is a Mersenne Twister — predictable from any handful of outputs. Tokens, password reset codes, invite IDs, and session IDs generated this way are guessable. AI writes 'Math.random().toString(36).substring(2)' constantly because it 'looks random'.",
+      "remediation": "Use crypto.randomBytes(32).toString('hex') for tokens, or crypto.randomUUID() for IDs. Both are CSPRNG-backed and unpredictable.",
+      "regex": "Math\\.random\\s*\\(\\s*\\)\\s*\\.\\s*toString\\s*\\(\\s*36",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "V61",
+      "name": "MD5 Used for Password Hashing",
+      "severity": "Critical",
+      "note": "MD5 has been broken since 2004 — billion-hash-per-second rainbow tables exist. Any MD5'd password is recoverable in minutes. AI uses it because old tutorials still teach it.",
+      "remediation": "Use bcrypt (recommended), argon2id, or scrypt with proper salt and cost factor. Never MD5 a password, even with salt.",
+      "regex": "createHash\\s*\\(\\s*['\"]md5['\"]",
+      "regex_flags": "i",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "require_contains": ["password"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "V62",
+      "name": "SHA-1 Used for Password Hashing",
+      "severity": "High",
+      "note": "SHA-1 is broken (Google's SHAttered, 2017) and is also a fast hash — wrong choice for passwords even when it wasn't broken. AI substitutes SHA-1 for MD5 thinking it's an upgrade.",
+      "remediation": "Use bcrypt, argon2id, or scrypt. Password hashing requires a slow, memory-hard, salted KDF — not a general-purpose hash.",
+      "regex": "createHash\\s*\\(\\s*['\"](?:sha1|sha-1)['\"]",
+      "regex_flags": "i",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "require_contains": ["password"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "V63",
+      "name": "createCipheriv Called With Hardcoded String IV",
+      "severity": "Critical",
+      "note": "The IV passed to crypto.createCipheriv is a string literal. A constant IV reused across encryptions leaks plaintext patterns under any block cipher mode — for CBC, identical plaintexts produce identical ciphertexts; for GCM, IV reuse fully breaks confidentiality and authenticity.",
+      "remediation": "Generate a fresh IV per encryption: const iv = crypto.randomBytes(16). Prepend it to the ciphertext (it doesn't need to be secret, just unpredictable).",
+      "regex": "createCipheriv\\s*\\([^,]+,[^,]+,\\s*['\"`][A-Za-z0-9+/=._-]{4,}['\"`]",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "V64",
+      "name": "AES-ECB Mode Used",
+      "severity": "Critical",
+      "note": "ECB mode encrypts each block independently — identical plaintext blocks produce identical ciphertext blocks. The 'ECB penguin' image demonstrates the leak visually. There is no good reason to use ECB in 2026.",
+      "remediation": "Use AES-GCM (preferred — authenticated encryption) or AES-CBC with a fresh random IV per message and a separate HMAC for integrity.",
+      "regex": "['\"]aes-(?:128|192|256)-ecb['\"]",
+      "regex_flags": "i",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs", "py", "pyw"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "V65",
+      "name": "crypto.createCipher() Deprecated API",
+      "severity": "Critical",
+      "note": "crypto.createCipher (no 'iv') was deprecated in Node 10 because it derives the key from a password via a weak KDF and uses no IV. It is functionally insecure regardless of the algorithm name passed.",
+      "remediation": "Switch to crypto.createCipheriv(algorithm, key, iv) with key from crypto.scrypt() or crypto.pbkdf2() and iv from crypto.randomBytes(16).",
+      "regex": "crypto\\.createCipher\\s*\\(",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "V66",
+      "name": "RSA-PKCS1 v1.5 Padding (Use OAEP)",
+      "severity": "High",
+      "note": "RSA_PKCS1_PADDING is vulnerable to Bleichenbacher's attack — a network attacker can decrypt ciphertexts using only the server's responses to malformed messages. Variants of this attack have broken TLS, XML encryption, and JWT implementations for two decades.",
+      "remediation": "Use RSA_PKCS1_OAEP_PADDING for encryption and RSA_PKCS1_PSS_PADDING for signatures. If you control both sides, prefer hybrid encryption (RSA-OAEP wrapping an AES-GCM key) or switch to libsodium / age.",
+      "regex": "RSA_PKCS1_PADDING",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs", "py", "pyw"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "V67",
+      "name": "Static Salt in PBKDF2 / scrypt",
+      "severity": "Critical",
+      "note": "PBKDF2 / scrypt is called with a string-literal salt. A static salt across all passwords means an attacker who breaks one hash gets a rainbow table for every user — the whole point of salting is defeated.",
+      "remediation": "Generate a unique random salt per password: const salt = crypto.randomBytes(16). Store the salt alongside the hash; you'll need it for verification.",
+      "regex": "(?:pbkdf2(?:Sync)?|scrypt(?:Sync)?)\\s*\\([^,]+,\\s*['\"`][A-Za-z0-9+/=._-]{4,}['\"`]",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "V68",
+      "name": "HMAC Digest Compared With == (Not timingSafeEqual)",
+      "severity": "Critical",
+      "note": "An HMAC digest is compared with == / === / !==. String equality returns false on the first mismatched byte, leaking timing information — a remote attacker can recover a valid signature one byte at a time. This is the same defect as FW78 but fires on any file, not just framework-detected projects.",
+      "remediation": "crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(received, 'hex')). Both Buffers must be the same length — return early on length mismatch.",
+      "regex": "\\.digest\\s*\\(\\s*['\"](?:hex|base64)['\"]\\s*\\)\\s*(?:===?|!==?)",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "exclude_contains": ["timingSafeEqual"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "V69",
+      "name": "Python hashlib.md5 / sha1 Used for Password Hashing",
+      "severity": "Critical",
+      "note": "hashlib.md5 / hashlib.sha1 used in a file that references 'password'. Both are broken for password storage — fast hashes plus an attack on the primitive itself. AI copies this pattern from old Python tutorials.",
+      "remediation": "Use passlib (argon2 / bcrypt) or hashlib.scrypt with a unique random salt. Never plain-hash a password regardless of the algorithm.",
+      "regex": "hashlib\\.(?:md5|sha1)\\s*\\(",
+      "scope": {
+        "extensions": ["py", "pyw"]
+      },
+      "require_contains": ["password"],
       "match_once": true
     }
   ]

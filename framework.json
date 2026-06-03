@@ -2,9 +2,9 @@
   "$schema": "../shared-rules/SCHEMA.md#v1",
   "scanner_id": "framework",
   "scanner_name": "Framework Safety",
-  "scanner_description": "Detects framework security features that are available but not enabled — missing helmet, absent rate limits, insecure session config, leaked NEXT_PUBLIC secrets, DEBUG=True in Django, APP_DEBUG in Laravel, dangerouslySetInnerHTML with user data.",
+  "scanner_description": "Detects framework security features that are available but not enabled — missing helmet, absent rate limits, insecure session config, leaked NEXT_PUBLIC secrets, DEBUG=True in Django, APP_DEBUG in Laravel, dangerouslySetInnerHTML with user data, webhook handlers without signature verification, unsafe file upload configuration.",
   "category": "framework",
-  "version": "1.0.0",
+  "version": "1.2.1",
   "overlay": false,
   "rules": [
     {
@@ -254,6 +254,286 @@
       "scope": {
         "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs", "vue"]
       },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW70",
+      "name": "Stripe Webhook Handler Missing constructEvent",
+      "severity": "Critical",
+      "note": "A Stripe webhook route is registered but the file never calls stripe.webhooks.constructEvent. Without signature verification, anyone can POST fake events (payment_succeeded, customer.subscription.created) and trigger your fulfillment logic.",
+      "remediation": "stripe.webhooks.constructEvent(req.body, req.headers['stripe-signature'], process.env.STRIPE_WEBHOOK_SECRET). The body must be a raw Buffer — register express.raw({ type: 'application/json' }) on this route.",
+      "regex": "(?:app|router)\\.(?:post|all|use)\\s*\\(\\s*['\"`][^'\"`]*(?:stripe[/_-]?webhook|webhook[/_-]?stripe|stripe[/_-]?event)",
+      "regex_flags": "i",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "exclude_contains": ["constructEvent"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW71",
+      "name": "GitHub Webhook Handler Missing Signature Verification",
+      "severity": "Critical",
+      "note": "A GitHub webhook route is registered but the file never references X-Hub-Signature-256. GitHub signs every webhook with your secret — without checking it, anyone can spoof pushes, issue events, or PR merges to your handler.",
+      "remediation": "Read req.headers['x-hub-signature-256'], compute crypto.createHmac('sha256', secret).update(rawBody).digest('hex'), prefix with 'sha256=', and compare with crypto.timingSafeEqual.",
+      "regex": "(?:app|router)\\.(?:post|all|use)\\s*\\(\\s*['\"`][^'\"`]*(?:github[/_-]?webhook|webhook[/_-]?github|github[/_-]?event)",
+      "regex_flags": "i",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "exclude_contains": ["x-hub-signature", "X-Hub-Signature", "hub-signature"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW72",
+      "name": "Clerk Webhook Handler Missing svix Verification",
+      "severity": "Critical",
+      "note": "A Clerk webhook route is registered but the file never calls Webhook.verify() from svix. Clerk events (user.created, session.created) are signed with your Svix secret — without verification, anyone can forge user lifecycle events.",
+      "remediation": "Use the svix library: new Webhook(process.env.CLERK_WEBHOOK_SECRET).verify(payload, headers). It throws if the signature is invalid.",
+      "regex": "(?:app|router)\\.(?:post|all|use)\\s*\\(\\s*['\"`][^'\"`]*(?:clerk[/_-]?webhook|webhook[/_-]?clerk)",
+      "regex_flags": "i",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "exclude_contains": ["Webhook.verify", "svix", "Svix"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW73",
+      "name": "Polar Webhook Handler Missing Signature Verification",
+      "severity": "Critical",
+      "note": "A Polar webhook route is registered without calling validateEvent or checking the polar-signature header. Polar manages payments and licenses — a spoofed event can grant a free Pro license or reverse a refund.",
+      "remediation": "Use Polar's SDK helper validateEvent(payload, headers, webhookSecret), or verify the polar-signature header manually with HMAC-SHA256 + crypto.timingSafeEqual.",
+      "regex": "(?:app|router)\\.(?:post|all|use)\\s*\\(\\s*['\"`][^'\"`]*(?:polar[/_-]?webhook|webhook[/_-]?polar)",
+      "regex_flags": "i",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "exclude_contains": ["validateEvent", "polar-signature", "x-polar-signature"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW74",
+      "name": "Linear Webhook Handler Missing Signature Verification",
+      "severity": "High",
+      "note": "A Linear webhook route is registered but the file never reads the linear-signature header. Linear signs every webhook with your endpoint secret — without verification, anyone can POST fake issue.created or comment.created events.",
+      "remediation": "Read req.headers['linear-signature'], compute crypto.createHmac('sha256', secret).update(rawBody).digest('hex'), compare with crypto.timingSafeEqual.",
+      "regex": "(?:app|router)\\.(?:post|all|use)\\s*\\(\\s*['\"`][^'\"`]*(?:linear[/_-]?webhook|webhook[/_-]?linear)",
+      "regex_flags": "i",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "exclude_contains": ["linear-signature", "Linear-Signature"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW75",
+      "name": "Slack Events Endpoint Missing X-Slack-Signature Verification",
+      "severity": "Critical",
+      "note": "A Slack events endpoint is registered without verifying X-Slack-Signature. Slack signs every request with v0=HMAC-SHA256(timestamp + body, signing_secret) — without checking it, attackers can fake slash commands, message events, and interactivity payloads.",
+      "remediation": "Read x-slack-request-timestamp + x-slack-signature, recompute the signature, and compare with crypto.timingSafeEqual. Reject requests where the timestamp is more than 5 minutes old (replay protection).",
+      "regex": "(?:app|router)\\.(?:post|all|use)\\s*\\(\\s*['\"`][^'\"`]*(?:slack[/_-]?events?|slack[/_-]?webhook|webhook[/_-]?slack|slack[/_-]?interactivity)",
+      "regex_flags": "i",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "exclude_contains": ["x-slack-signature", "X-Slack-Signature", "slackSigningSecret", "SlackVerify"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW76",
+      "name": "Shopify Webhook Handler Missing HMAC Verification",
+      "severity": "High",
+      "note": "A Shopify webhook route is registered without checking X-Shopify-Hmac-Sha256. Shopify signs every webhook with your shared secret — without verification, anyone can POST fake order.paid or order.cancelled events.",
+      "remediation": "Read x-shopify-hmac-sha256, compute crypto.createHmac('sha256', secret).update(rawBody).digest('base64'), compare with crypto.timingSafeEqual.",
+      "regex": "(?:app|router)\\.(?:post|all|use)\\s*\\(\\s*['\"`][^'\"`]*(?:shopify[/_-]?webhook|webhook[/_-]?shopify)",
+      "regex_flags": "i",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "exclude_contains": ["x-shopify-hmac", "X-Shopify-Hmac"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW77",
+      "name": "Webhook Handler Without Any Signature Check",
+      "severity": "High",
+      "note": "A /webhook/ route is registered and the entire file contains no signature-verification primitives (constructEvent, createHmac, timingSafeEqual, vendor signature headers). Treating an unsigned webhook as authenticated is a common AI mistake — any internet client can fire your handler.",
+      "remediation": "Identify which vendor sends this webhook and verify their signature header. Generic pattern: read the signature header, compute crypto.createHmac('sha256', secret).update(rawBody).digest('hex'), compare with crypto.timingSafeEqual.",
+      "regex": "(?:app|router)\\.(?:post|all|use)\\s*\\(\\s*['\"`]/(?:api/)?webhooks?/\\w+['\"`]",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "exclude_contains": [
+        "constructEvent",
+        "createHmac",
+        "timingSafeEqual",
+        "Webhook.verify",
+        "svix",
+        "validateEvent",
+        "x-hub-signature",
+        "x-slack-signature",
+        "x-shopify-hmac",
+        "polar-signature",
+        "linear-signature",
+        "verifySignature",
+        "verify_signature"
+      ],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW78",
+      "name": "HMAC Compared With == Instead of timingSafeEqual",
+      "severity": "Critical",
+      "note": "An HMAC digest is compared with == / === / !==. String equality returns false on the first mismatched byte, leaking timing information — a remote attacker can recover a valid signature one byte at a time. AI-generated webhook code defaults to == constantly.",
+      "remediation": "Replace with crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(received, 'hex')). Both Buffers must be the same length — return early on length mismatch.",
+      "regex": "\\.digest\\s*\\(\\s*['\"](?:hex|base64)['\"]\\s*\\)\\s*(?:===?|!==?)",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "exclude_contains": ["timingSafeEqual"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW79",
+      "name": "Stripe constructEvent Called With JSON.stringify(req.body)",
+      "severity": "High",
+      "note": "constructEvent receives JSON.stringify(req.body) — Stripe verifies against the EXACT bytes it sent, but JSON.stringify re-serializes with different whitespace and key ordering. Signature verification will fail in production. AI 'fixes' this by passing a parsed object, breaking the security.",
+      "remediation": "Register express.raw({ type: 'application/json' }) on the webhook route so req.body is a Buffer, then pass it directly: constructEvent(req.body, sig, secret). Never JSON.stringify before constructEvent.",
+      "regex": "constructEvent\\s*\\(\\s*JSON\\.stringify\\s*\\(\\s*req",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW80",
+      "name": "Multer Configured Without fileFilter (Express)",
+      "severity": "High",
+      "note": "multer() is called without a fileFilter. Any uploaded file is accepted — including .exe, .php, .html, or .svg with embedded scripts. The MIME type can be set by the client and lies.",
+      "remediation": "Add a fileFilter that checks file.mimetype AND the buffer's magic bytes against an allowlist: multer({ fileFilter: (req, file, cb) => cb(null, ALLOWED.includes(file.mimetype)) }).",
+      "regex": "multer\\s*\\(\\s*\\{",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "context_filter": {
+        "type": "exclude_nearby_keyword",
+        "keywords": ["fileFilter"],
+        "window_chars": 400,
+        "direction": "after"
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW81",
+      "name": "Multer Configured Without limits (Express)",
+      "severity": "Medium",
+      "note": "multer() is called without a limits config. Uploads can be arbitrarily large — a single client can exhaust disk or memory and DoS the server.",
+      "remediation": "Set explicit per-upload limits: multer({ limits: { fileSize: 5 * 1024 * 1024, files: 5 } }) (5 MB, max 5 files per request).",
+      "regex": "multer\\s*\\(\\s*\\{",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "context_filter": {
+        "type": "exclude_nearby_keyword",
+        "keywords": ["limits"],
+        "window_chars": 400,
+        "direction": "after"
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW82",
+      "name": "Multer dest Set to Web-Served Directory",
+      "severity": "Critical",
+      "note": "multer's dest is inside a web-served directory (public/, static/, www/, dist/, build/). Uploaded files are reachable via direct URL — including any .html/.svg/.js the attacker uploads, making this a stored-XSS vector at minimum.",
+      "remediation": "Store uploads outside the public webroot (e.g., /var/uploads/) and serve them through an authenticated route that sets Content-Disposition: attachment.",
+      "regex": "multer\\s*\\(\\s*\\{[^}]{0,400}dest\\s*:\\s*['\"`](?:\\./)?(?:public|static|www|html|wwwroot|assets|build|dist)[/'\"`]",
+      "regex_flags": "i",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW83",
+      "name": "Formidable Configured Without maxFileSize",
+      "severity": "Medium",
+      "note": "formidable parses multipart uploads with no maxFileSize cap. The default accepts up to 200 MB per file — a flood of large uploads can fill disk and trip the server.",
+      "remediation": "Set maxFileSize explicitly: new formidable.IncomingForm({ maxFileSize: 5 * 1024 * 1024 }) (5 MB). Add maxFiles and maxFields too.",
+      "regex": "(?:new\\s+formidable\\.IncomingForm|formidable\\.IncomingForm\\s*\\(|formidable\\s*\\(\\s*\\{|formidable\\.formidable\\s*\\(\\s*\\{)",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "exclude_contains": ["maxFileSize"],
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW84",
+      "name": "User-Supplied Filename Used in Path Construction",
+      "severity": "Critical",
+      "note": "file.originalname is passed directly into path.join / fs.writeFile / fs.createWriteStream / fs.rename. A malicious client can set originalname to ../../etc/passwd or C:\\\\Windows\\\\System32\\\\... and write outside the upload directory. This is path traversal.",
+      "remediation": "Sanitize with path.basename(file.originalname) before joining, or replace the filename entirely with crypto.randomUUID() + a server-controlled extension.",
+      "regex": "(?:path\\.(?:join|resolve)|fs\\.(?:writeFile|writeFileSync|createWriteStream|rename|renameSync))\\s*\\([^)]*\\.originalname",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW85",
+      "name": "File Upload Extension Allowlist Includes Dangerous Type",
+      "severity": "Critical",
+      "note": "Upload allowlist contains .svg, .html, .htm, .xml, .js, or .mjs. SVG can carry <script> tags; HTML/JS are obviously executable; XML enables XXE — any of these served from your origin is stored XSS or worse.",
+      "remediation": "Remove these extensions from the allowlist. If you must accept SVG, sanitize with DOMPurify on upload AND serve with Content-Type: image/svg+xml + a sandbox CSP.",
+      "regex": "(?:allowedExtensions|extensionWhitelist|allowedTypes|allowed_types|fileTypes|file_types|allowedExts|allowed_extensions|permittedExtensions)\\s*[:=]\\s*\\[[^\\]]{0,300}['\"`]\\.?(?:svg|html|htm|xml|js|mjs)['\"`]",
+      "regex_flags": "i",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW86",
+      "name": "Multer diskStorage filename Returns originalname Unsanitized",
+      "severity": "Critical",
+      "note": "multer.diskStorage's filename callback returns file.originalname. The client controls this string — they can submit ../../shell.php or filename.exe to overwrite arbitrary paths or upload an executable. AI 'preserves' the original name without sanitizing.",
+      "remediation": "Generate the saved filename server-side: cb(null, crypto.randomUUID() + path.extname(file.originalname)). Only the extension is taken from the client, and only after a strict allowlist check.",
+      "regex": "filename\\s*:\\s*(?:function\\s*\\([^)]*\\)|\\([^)]*\\)\\s*=>)\\s*\\{?[^}]{0,200}\\.originalname",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "match_once": true
+    },
+    {
+      "kind": "regex",
+      "id": "FW87",
+      "name": "Busboy Configured Without limits",
+      "severity": "Medium",
+      "note": "busboy parses multipart uploads without a limits config. Defaults allow unlimited file sizes, field counts, and parts — a single attacker can exhaust memory or fill disk with one request.",
+      "remediation": "Set explicit limits: Busboy({ headers: req.headers, limits: { fileSize: 5*1024*1024, files: 5, fields: 20 } }).",
+      "regex": "(?:new\\s+[Bb]usboy\\s*\\(|[Bb]usboy\\s*\\(\\s*\\{|require\\s*\\(\\s*['\"]busboy['\"]|from\\s+['\"]busboy['\"])",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "exclude_contains": ["limits"],
       "match_once": true
     }
   ]

@@ -398,6 +398,7 @@ function main() {
     (f) =>
       f.endsWith(".json") &&
       f !== "pack-meta.json" &&
+      f !== "guidance.json" && // proactive-guidance data table, not a scanner rule pack
       (!packFilter || f === packFilter),
   );
 

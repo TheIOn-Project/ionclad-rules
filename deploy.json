@@ -4,7 +4,7 @@
   "scanner_name": "Deploy Readiness",
   "scanner_description": "Detects production configuration issues that will cause outages, data leaks, or degraded performance in deployed environments.",
   "category": "deploy",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "overlay": true,
   "rules": [
     {
@@ -185,7 +185,7 @@
       "scope": {
         "path_suffixes": ["package.json"]
       },
-      "exclude_contains": ["pm2", "forever", "nodemon", "\"bin\":", "\"preferGlobal\""],
+      "exclude_contains": ["pm2", "forever", "nodemon"],
       "match_once": true
     },
     {
@@ -421,6 +421,108 @@
         "extensions": ["yaml", "yml"]
       },
       "exclude_contains": ["resources:"],
+      "match_once": true
+    },
+
+    {
+      "kind": "regex",
+      "id": "DP33",
+      "name": "Tauri DevTools Enabled in Production Window Config",
+      "severity": "Critical",
+      "note": "tauri.conf.json explicitly enables DevTools (\"devtools\": true) on a release window. A pirate can open DevTools and mutate Zustand/Redux store state to bypass client-side license, auth, or paywall gates — every Pro feature unlocks instantly with one console line.",
+      "remediation": "Set \"devtools\": false in the windows config, and confirm Cargo.toml's tauri dependency does not include the \"devtools\" feature. Combine with server-side (Rust command) enforcement so a JS-layer bypass yields no Pro data.",
+      "regex": "\"devtools\"\\s*:\\s*true",
+      "scope": {
+        "extensions": ["json"],
+        "path_suffixes": ["tauri.conf.json"]
+      },
+      "match_once": true
+    },
+
+    {
+      "kind": "regex",
+      "id": "DP34",
+      "name": "Tauri Cargo Feature Includes DevTools",
+      "severity": "High",
+      "note": "Cargo.toml opts the tauri crate into the \"devtools\" feature, which forces DevTools into release builds. Same exposure as DP33 — frontend state mutation bypasses client-side gates.",
+      "remediation": "Remove \"devtools\" from the tauri features list. Tauri keeps DevTools in debug builds automatically; do not gate it via a feature for production.",
+      "regex": "tauri\\s*=[^\\n]*features\\s*=\\s*\\[[^\\]]*\"devtools\"",
+      "scope": {
+        "extensions": ["toml"],
+        "path_suffixes": ["Cargo.toml"]
+      },
+      "match_once": true
+    },
+
+    {
+      "kind": "regex",
+      "id": "DP35",
+      "name": "Tauri Windows Code Signing Not Configured",
+      "severity": "High",
+      "note": "tauri.conf.json has \"certificateThumbprint\": null on Windows. Unsigned binaries trigger SmartScreen warnings, look identical to repackaged cracked builds, and let pirates distribute modified versions without OS-level detection.",
+      "remediation": "Obtain a Windows code-signing certificate (DigiCert, Sectigo, etc.) and set certificateThumbprint to the SHA1 of the certificate. Required before public release.",
+      "regex": "\"certificateThumbprint\"\\s*:\\s*null",
+      "scope": {
+        "extensions": ["json"],
+        "path_suffixes": ["tauri.conf.json"]
+      },
+      "match_once": true
+    },
+
+    {
+      "kind": "regex",
+      "id": "DP36",
+      "name": "Tauri macOS Code Signing Not Configured",
+      "severity": "High",
+      "note": "tauri.conf.json has \"signingIdentity\": null on macOS. Unsigned macOS apps trigger Gatekeeper, won't notarize, and let pirates distribute modified versions without OS-level detection.",
+      "remediation": "Set signingIdentity to your Apple Developer ID Application certificate name (e.g., \"Developer ID Application: Your Name (TEAMID)\") and configure entitlements + notarization in your release pipeline.",
+      "regex": "\"signingIdentity\"\\s*:\\s*null",
+      "scope": {
+        "extensions": ["json"],
+        "path_suffixes": ["tauri.conf.json"]
+      },
+      "match_once": true
+    },
+
+    {
+      "kind": "regex",
+      "id": "DP37",
+      "name": "Electron Node Integration Enabled in Renderer",
+      "severity": "Critical",
+      "note": "BrowserWindow is created with nodeIntegration: true. Any XSS in the renderer becomes RCE — attacker JavaScript can require('child_process').exec() with full host privileges. This is the #1 Electron security mistake.",
+      "remediation": "Set nodeIntegration: false (default in modern Electron) and use a preload script with contextBridge.exposeInMainWorld() to expose only the APIs you need. Never run untrusted content with Node integration on.",
+      "regex": "nodeIntegration\\s*:\\s*true",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "match_once": true
+    },
+
+    {
+      "kind": "regex",
+      "id": "DP38",
+      "name": "Electron Context Isolation Disabled",
+      "severity": "Critical",
+      "note": "BrowserWindow has contextIsolation: false. The renderer and preload script share a global scope, so a prototype pollution or supply-chain XSS in the renderer can rewrite the preload's exposed APIs and escalate to RCE.",
+      "remediation": "Set contextIsolation: true (default in Electron 12+). Use contextBridge.exposeInMainWorld() in the preload to expose APIs safely.",
+      "regex": "contextIsolation\\s*:\\s*false",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
+      "match_once": true
+    },
+
+    {
+      "kind": "regex",
+      "id": "DP39",
+      "name": "Electron Web Security Disabled",
+      "severity": "Critical",
+      "note": "BrowserWindow has webSecurity: false, which disables the same-origin policy. Any loaded page can read cross-origin resources, including local files via file:// URLs. Combined with Node integration this is full RCE; alone it's a serious data-exfiltration vector.",
+      "remediation": "Remove webSecurity: false. It exists solely as a development convenience and has no legitimate use in a release build. Solve your CORS issue another way (proxy, preload IPC, etc.).",
+      "regex": "webSecurity\\s*:\\s*false",
+      "scope": {
+        "extensions": ["js", "jsx", "ts", "tsx", "mjs", "cjs"]
+      },
       "match_once": true
     }
   ]

@@ -11,12 +11,13 @@ That disclaimer is on every IOnclad scan result and now also at the top of this 
 | Pack | Rules | Coverage |
 |---|---|---|
 | `secret.json` | 30 (29 regex + 1 entropy) | Hardcoded AWS / GitHub / Stripe / Slack / OpenAI / Anthropic / Google / Heroku / Twilio / SendGrid / etc. tokens, plus Shannon-entropy fallback for keys without provider patterns. |
-| `vibe.json` | 17 | AI-generated code anti-patterns — debug flags, weak default secrets, SQL injection shapes, JWT misuse, common smells in vibe-coded prototypes. |
-| `framework.json` | 18 | Express / Next.js / Django / Flask / Rails / Laravel / React / Vue framework-specific misconfigurations. |
-| `deploy.json` | 31 | Production-readiness audit: TLS enforcement, DB SSL, env-var hygiene, K8s probes, source-map leakage, hardcoded ports, missing `.env.example`. |
+| `vibe.json` | 27 | AI-generated code anti-patterns — debug flags, weak default secrets, SQL injection shapes, JWT misuse, common smells in vibe-coded prototypes. |
+| `framework.json` | 36 | Express / Next.js / Django / Flask / Rails / Laravel / React / Vue framework-specific misconfigurations. |
+| `deploy.json` | 38 | Production-readiness audit: TLS enforcement, DB SSL, env-var hygiene, K8s probes, source-map leakage, hardcoded ports, missing `.env.example`. |
 | `privacy.json` | 13 | GDPR / CCPA / app-store basics — privacy policy presence, PII keywords, ad-network SDK usage, tracking framework usage. |
+| `llm-security.json` | 23 | LLM / AI-app security — prompt injection, unsafe handling of model output, system-prompt leakage, missing input/output limits, and tool/function-call risks in LLM integrations. |
 
-**Total: 5 packs, 109 rules, schema v1.1.0.**
+**Total: 6 packs, 167 rules, schema v1.1.0.**
 
 ## Schema
 
@@ -38,8 +39,8 @@ Output:
 
 ```
 IOnclad rule pack validator
-Found 5 pack(s): deploy.json, framework.json, privacy.json, secret.json, vibe.json
-OK 5 pack(s), 109 rule(s) validated cleanly
+Found 6 pack(s): deploy.json, framework.json, llm-security.json, privacy.json, secret.json, vibe.json
+OK 6 pack(s), 167 rule(s) validated cleanly
 ```
 
 ## Try the rules without writing code
